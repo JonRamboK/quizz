@@ -5,27 +5,27 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>js-quiz — JavaScript Practice</title>
 <meta name="description" content="534 multiple-choice questions across 89 JavaScript topics. Practice by topic, by part, or with a random mix.">
-<meta name="theme-color" content="#0f1729">
+<meta name="theme-color" content="#f6f7fb">
 <style>
 :root{
-  --bg:#0f1729;
-  --bg-2:#0b1220;
-  --surface:#18233d;
-  --surface-2:#1f2c4a;
-  --surface-hover:#263457;
-  --border:#2a3a5c;
-  --text:#e9eefb;
-  --text-dim:#93a2c4;
-  --text-faint:#5c6a8c;
-  --accent:#f0db4f;
-  --accent-ink:#241f06;
-  --violet:#b39cf5;
-  --good:#3ddc84;
-  --good-bg:rgba(61,220,132,.13);
+  --bg:#f6f7fb;
+  --bg-2:#eef0f6;
+  --surface:#ffffff;
+  --surface-2:#f2f4f9;
+  --surface-hover:#e9ecf5;
+  --border:#dde1ec;
+  --text:#1a2033;
+  --text-dim:#5b6480;
+  --text-faint:#9aa2ba;
+  --accent:#f0c419;
+  --accent-ink:#2a2205;
+  --violet:#7c5cf0;
+  --good:#16a34a;
+  --good-bg:rgba(22,163,74,.12);
   --good-ink:#0a3320;
-  --bad:#ff7676;
-  --bad-bg:rgba(255,118,118,.13);
-  --bad-ink:#3a0d0d;
+  --bad:#dc2626;
+  --bad-bg:rgba(220,38,38,.10);
+  --bad-ink:#4a0d0d;
   --r-sm:10px;
   --r-md:16px;
   --r-lg:22px;
@@ -40,8 +40,8 @@ body{
   margin:0;
   min-height:100dvh;
   background:
-    radial-gradient(900px 500px at 15% -10%, rgba(240,219,79,.07), transparent 60%),
-    radial-gradient(700px 500px at 110% 10%, rgba(179,156,245,.08), transparent 55%),
+    radial-gradient(900px 500px at 15% -10%, rgba(240,196,25,.10), transparent 60%),
+    radial-gradient(700px 500px at 110% 10%, rgba(124,92,240,.08), transparent 55%),
     var(--bg);
   color:var(--text);
   font-family:var(--font-ui);
@@ -181,7 +181,9 @@ button{-webkit-tap-highlight-color:transparent;}
 /* ---------- QUIZ ---------- */
 .quiz-meta{ padding:2px 20px 10px; display:flex; flex-direction:column; gap:10px; }
 .quiz-crumb{ font-size:12.5px; color:var(--text-dim); display:flex; justify-content:space-between; gap:10px; }
-.quiz-crumb .score{ font-family:var(--font-mono); color:var(--accent); }
+.quiz-crumb .score{ font-family:var(--font-mono); color:var(--accent-ink); background:var(--accent); padding:1px 8px; border-radius:999px; font-weight:700; }
+.quiz-crumb .timer{ font-family:var(--font-mono); color:var(--text-dim); font-weight:600; }
+.quiz-crumb .timer.low{ color:var(--bad); font-weight:800; }
 .progress-track{ height:6px; background:var(--surface); border-radius:999px; overflow:hidden; }
 .progress-fill{ height:100%; background:linear-gradient(90deg, var(--violet), var(--accent)); border-radius:999px; transition:width .35s ease; }
 @media (prefers-reduced-motion:reduce){ .progress-fill{ transition:none; } }
@@ -375,6 +377,8 @@ var QUIZ_DATA = [{"title":"Part 1 — JavaScript Basics","topics":[{"num":1,"tit
   var ADMIN_EMAIL = 'fazalurrehmank@gmail.com';
   var ADMIN_PASSWORD = 'karachi123';
   var PASS_THRESHOLD = 50; // percent needed to pass a quiz
+  var QUIZ_DURATION_MS = 30 * 60 * 1000; // 30 minute time limit per quiz
+  var quizTimerHandle = null;
   var STORAGE_STUDENT = 'jsquiz_student_profile';
   var STORAGE_RESULTS = 'jsquiz_results';
 
@@ -403,7 +407,7 @@ var QUIZ_DATA = [{"title":"Part 1 — JavaScript Basics","topics":[{"num":1,"tit
     homeFilter: '',
     openParts: {},
     session: null, // {title, source(part/topic/random), questions:[shuffled], index, score, log:[]}
-    student: loadStudent(), // {name, grNo, fatherName} or null
+    student: loadStudent(), // {name, fatherName, school, phone} or null
     pendingQuiz: null, // {questions, title} waiting on student info before starting
     adminAuthed: false,
     adminError: '',
@@ -411,14 +415,42 @@ var QUIZ_DATA = [{"title":"Part 1 — JavaScript Basics","topics":[{"num":1,"tit
   };
 
   /* ---------------- session control ---------------- */
+  function formatTime(ms){
+    var totalSec = Math.max(0, Math.ceil(ms / 1000));
+    var m = Math.floor(totalSec / 60);
+    var sec = totalSec % 60;
+    return (m < 10 ? '0' : '') + m + ':' + (sec < 10 ? '0' : '') + sec;
+  }
+  function clearQuizTimer(){
+    if (quizTimerHandle){ clearInterval(quizTimerHandle); quizTimerHandle = null; }
+  }
+  function startQuizTimer(){
+    clearQuizTimer();
+    quizTimerHandle = setInterval(function(){
+      var s = state.session;
+      if (!s || state.screen !== 'quiz'){ clearQuizTimer(); return; }
+      var remaining = s.endTime - Date.now();
+      var el = document.getElementById('quizTimer');
+      if (el){
+        el.textContent = formatTime(remaining);
+        el.classList.toggle('low', remaining <= 60000);
+      }
+      if (remaining <= 0){
+        clearQuizTimer();
+        finishQuiz();
+      }
+    }, 1000);
+  }
   function startSession(rawQuestions, title){
     var qs = rawQuestions.map(shuffleQuestion);
-    state.session = { title: title, questions: qs, index: 0, score: 0, log: [], answered: false, chosen: null };
+    state.session = { title: title, questions: qs, index: 0, score: 0, log: [], answered: false, chosen: null, endTime: Date.now() + QUIZ_DURATION_MS, saved: false };
     state.screen = 'quiz';
     render();
+    startQuizTimer();
   }
   function retrySession(){
     if (!state.session) return;
+    clearQuizTimer();
     var base = state.session.questions.map(function(q){
       // reconstruct original-ish shape then reshuffle again for a fresh attempt
       return { prompt:q.prompt, options:q.options, correct:q.correct,
@@ -427,6 +459,7 @@ var QUIZ_DATA = [{"title":"Part 1 — JavaScript Basics","topics":[{"num":1,"tit
     startSession(base, state.session.title);
   }
   function goHome(){
+    clearQuizTimer();
     state.screen = 'home';
     state.session = null;
     render();
@@ -444,17 +477,23 @@ var QUIZ_DATA = [{"title":"Part 1 — JavaScript Basics","topics":[{"num":1,"tit
   }
   function submitStudentInfo(){
     var nameEl = document.getElementById('stuName');
-    var grEl = document.getElementById('stuGR');
     var fatherEl = document.getElementById('stuFather');
+    var schoolEl = document.getElementById('stuSchool');
+    var phoneEl = document.getElementById('stuPhone');
     var name = nameEl ? nameEl.value.trim() : '';
-    var gr = grEl ? grEl.value.trim() : '';
     var father = fatherEl ? fatherEl.value.trim() : '';
+    var school = schoolEl ? schoolEl.value.trim() : '';
+    var phone = phoneEl ? phoneEl.value.trim() : '';
     var errEl = document.getElementById('stuError');
-    if (!name || !gr || !father){
-      if (errEl) errEl.textContent = 'Please fill in all three fields.';
+    if (!name || !father || !school || !phone){
+      if (errEl) errEl.textContent = 'Please fill in all fields.';
       return;
     }
-    var profile = { name: name, grNo: gr, fatherName: father };
+    if (!/^\d{11}$/.test(phone)){
+      if (errEl) errEl.textContent = 'Phone number must be exactly 11 digits (numbers only).';
+      return;
+    }
+    var profile = { name: name, fatherName: father, school: school, phone: phone };
     saveStudent(profile);
     state.student = profile;
     var pending = state.pendingQuiz;
@@ -542,24 +581,31 @@ var QUIZ_DATA = [{"title":"Part 1 — JavaScript Basics","topics":[{"num":1,"tit
       s.chosen = null;
       render();
     } else {
-      state.screen = 'results';
-      if (!s.saved){
-        s.saved = true;
-        var pct = Math.round(s.score / s.questions.length * 100);
-        saveResultRecord({
-          name: state.student ? state.student.name : '',
-          grNo: state.student ? state.student.grNo : '',
-          fatherName: state.student ? state.student.fatherName : '',
-          quizTitle: s.title,
-          score: s.score,
-          total: s.questions.length,
-          percent: pct,
-          passed: pct >= PASS_THRESHOLD,
-          date: new Date().toISOString()
-        });
-      }
-      render();
+      finishQuiz();
     }
+  }
+  function finishQuiz(){
+    var s = state.session;
+    if (!s) return;
+    clearQuizTimer();
+    state.screen = 'results';
+    if (!s.saved){
+      s.saved = true;
+      var pct = Math.round(s.score / s.questions.length * 100);
+      saveResultRecord({
+        name: state.student ? state.student.name : '',
+        fatherName: state.student ? state.student.fatherName : '',
+        school: state.student ? state.student.school : '',
+        phone: state.student ? state.student.phone : '',
+        quizTitle: s.title,
+        score: s.score,
+        total: s.questions.length,
+        percent: pct,
+        passed: pct >= PASS_THRESHOLD,
+        date: new Date().toISOString()
+      });
+    }
+    render();
   }
 
   /* ---------------- render: HOME ---------------- */
@@ -676,6 +722,8 @@ var QUIZ_DATA = [{"title":"Part 1 — JavaScript Basics","topics":[{"num":1,"tit
       '</button>';
     }).join('');
 
+    var remaining = s.endTime ? (s.endTime - Date.now()) : QUIZ_DURATION_MS;
+
     app.innerHTML =
       '<div class="topbar">' +
         '<button class="icon-btn" data-action="home" aria-label="Back to topics">' +
@@ -684,7 +732,7 @@ var QUIZ_DATA = [{"title":"Part 1 — JavaScript Basics","topics":[{"num":1,"tit
         '<div class="brand"><b>Fazal K</b>-quiz<span class="cursor"></span></div>' +
       '</div>' +
       '<div class="quiz-meta">' +
-        '<div class="quiz-crumb"><span>'+escapeHtml(s.title)+'</span><span class="score">'+s.score+'/'+s.index+'</span></div>' +
+        '<div class="quiz-crumb"><span>'+escapeHtml(s.title)+'</span><span class="timer'+(remaining<=60000?' low':'')+'" id="quizTimer">'+formatTime(remaining)+'</span><span class="score">'+s.score+'/'+s.index+'</span></div>' +
         '<div class="progress-track"><div class="progress-fill" style="width:'+pct+'%"></div></div>' +
         '<div class="q-count">Question '+(s.index+1)+' of '+s.questions.length+'</div>' +
       '</div>' +
@@ -764,7 +812,7 @@ var QUIZ_DATA = [{"title":"Part 1 — JavaScript Basics","topics":[{"num":1,"tit
         '<div class="score-card">' +
           '<div class="score-big">'+s.score+'<span style="color:var(--text-faint)">/'+total+'</span> <span class="score-pct">('+pct+'%)</span></div>' +
           '<div class="score-label">'+escapeHtml(s.title)+'</div>' +
-          (state.student ? '<div class="score-label">'+escapeHtml(state.student.name)+' \u00b7 GR '+escapeHtml(state.student.grNo)+'</div>' : '') +
+          (state.student ? '<div class="score-label">'+escapeHtml(state.student.name)+' \u00b7 '+escapeHtml(state.student.school)+'</div>' : '') +
           '<div style="margin-top:10px;"><span class="badge '+(pct>=PASS_THRESHOLD?'pass':'fail')+'">'+(pct>=PASS_THRESHOLD?'PASS':'FAIL')+'</span></div>' +
           '<div class="score-msg">'+msg+'</div>' +
           '<div class="score-sub">'+sub+'</div>' +
@@ -792,13 +840,20 @@ var QUIZ_DATA = [{"title":"Part 1 — JavaScript Basics","topics":[{"num":1,"tit
         '<div class="form-card">' +
           '<h2>Before you start</h2>' +
           '<p class="sub">Enter your details so your quiz result can be recorded and shared with your teacher.</p>' +
-          '<div class="field"><label>Full Name</label><input id="stuName" type="text" placeholder="e.g. Ayesha Khan" /></div>' +
-          '<div class="field"><label>GR No.</label><input id="stuGR" type="text" placeholder="e.g. 2024-115" /></div>' +
-          '<div class="field"><label>Father\u2019s Name</label><input id="stuFather" type="text" placeholder="e.g. Muhammad Khan" /></div>' +
+          '<div class="field"><label>Full Name</label><input id="stuName" type="text" placeholder="e.g. Khadija" /></div>' +
+          '<div class="field"><label>Father\u2019s Name</label><input id="stuFather" type="text" placeholder="e.g. Khan" /></div>' +
+          '<div class="field"><label>School Name</label><input id="stuSchool" type="text" placeholder="e.g. City Grammar School" /></div>' +
+          '<div class="field"><label>Phone Number (11 digits)</label><input id="stuPhone" type="tel" inputmode="numeric" maxlength="11" placeholder="e.g. 03001234567" /></div>' +
           '<div class="form-error" id="stuError"></div>' +
           '<button class="btn btn-primary btn-block" data-action="submit-student">Start Quiz</button>' +
         '</div>' +
       '</div>';
+    var phoneEl = document.getElementById('stuPhone');
+    if (phoneEl){
+      phoneEl.addEventListener('input', function(e){
+        e.target.value = e.target.value.replace(/\D/g, '').slice(0, 11);
+      });
+    }
   }
 
   /* ---------------- render: ADMIN LOGIN ---------------- */
@@ -829,7 +884,9 @@ var QUIZ_DATA = [{"title":"Part 1 — JavaScript Basics","topics":[{"num":1,"tit
     var filtered = all.filter(function(r){
       if (!filter) return true;
       return (r.name||'').toLowerCase().indexOf(filter)!==-1 ||
-             (r.grNo||'').toLowerCase().indexOf(filter)!==-1 ||
+             (r.school||'').toLowerCase().indexOf(filter)!==-1 ||
+             (r.phone||'').toLowerCase().indexOf(filter)!==-1 ||
+             (r.quizTitle||'').toLowerCase().indexOf(filter)!==-1 ||
              (r.fatherName||'').toLowerCase().indexOf(filter)!==-1;
     }).slice().sort(function(a,b){ return new Date(b.date) - new Date(a.date); });
 
@@ -844,8 +901,9 @@ var QUIZ_DATA = [{"title":"Part 1 — JavaScript Basics","topics":[{"num":1,"tit
           '<span class="name">'+escapeHtml(r.name||'(no name)')+'</span>' +
           '<span class="badge '+(r.passed?'pass':'fail')+'">'+(r.passed?'PASS':'FAIL')+'</span>' +
         '</div>' +
-        '<div class="meta">GR No: '+escapeHtml(r.grNo||'-')+' &nbsp;\u00b7&nbsp; Father: '+escapeHtml(r.fatherName||'-')+'</div>' +
-        '<div class="quiz">'+escapeHtml(r.quizTitle||'')+' \u2014 '+r.score+'/'+r.total+' ('+r.percent+'%)</div>' +
+        '<div class="meta">Father: '+escapeHtml(r.fatherName||'-')+' &nbsp;\u00b7&nbsp; School: '+escapeHtml(r.school||'-')+'</div>' +
+        '<div class="meta">Phone: '+escapeHtml(r.phone||'-')+'</div>' +
+        '<div class="quiz"><b>Quiz:</b> '+escapeHtml(r.quizTitle||'')+' \u2014 '+r.score+'/'+r.total+' ('+r.percent+'%)</div>' +
         '<div class="meta">'+dateStr+'</div>' +
       '</div>';
     }).join('');
@@ -862,7 +920,7 @@ var QUIZ_DATA = [{"title":"Part 1 — JavaScript Basics","topics":[{"num":1,"tit
       '</div>' +
       '<div class="hero">' +
         '<h1>Admin Dashboard</h1>' +
-        '<p>Every student\u2019s quiz attempts, with GR No, father\u2019s name, and pass/fail status.</p>' +
+        '<p>Every student\u2019s quiz attempts, with father\u2019s name, school, phone number, which quiz they took, and pass/fail status.</p>' +
         '<div class="stat-row">' +
           '<div class="stat"><b>'+totalAttempts+'</b><span>attempts</span></div>' +
           '<div class="stat"><b>'+passCount+'</b><span>passed</span></div>' +
@@ -872,7 +930,7 @@ var QUIZ_DATA = [{"title":"Part 1 — JavaScript Basics","topics":[{"num":1,"tit
       '<div class="search-wrap">' +
         '<div class="search-box">' +
           '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>' +
-          '<input id="adminSearch" type="text" placeholder="Search by name or GR No\u2026" value="'+escapeAttr(state.adminSearch||'')+'" />' +
+          '<input id="adminSearch" type="text" placeholder="Search by name, school, phone or quiz\u2026" value="'+escapeAttr(state.adminSearch||'')+'" />' +
         '</div>' +
       '</div>' +
       '<div class="section" style="padding-top:8px;">' +
